@@ -1,0 +1,296 @@
+#include "main.h"
+
+int8_t flagi1,tiki,chislo1 = 50, shag;
+int drebezg;
+uint8_t encoderplus,encoderminus,multiplexor;
+unsigned int timer1, timer2,timer3,timer4,razr1,razr2,razr3;
+
+
+
+//------------------------------------------------------------------------------
+// объявляем массивы для отображения на 7сегментном индикаторе
+//------------------------------------------------------------------------------
+const uint16_t delitel [10]   PROGMEM =   {16000,1600,800,500,400,200};
+const uint8_t razdelitel [10]  PROGMEM  =  {160,16,8,5,4,2};
+const int8_t chastota [10]    PROGMEM  =  {1,10,20,32,40,80};
+const  uint8_t tablo [20]      PROGMEM  =  {      // преобразование цифры в 7 сегментный знак
+	// 0
+	0x28,
+	// 1
+	0xEB,
+	// 2
+	0x32,
+	// 3
+	0xA2,
+	// 4
+	0xE1,
+	// 5
+	0xA4,
+	// 6
+	0x24,
+	// 7
+	0xEA,
+	// 8
+	0x20,
+	// 9
+	0xA0,
+	// H
+	0x61
+};
+
+//------------------------------------------------------------------------------
+// инициализируем прерывания
+//------------------------------------------------------------------------------
+ISR ( INT1_vect )        // прерывания от ацп
+{
+	if (ENCODERNAPR)
+	{
+		if (B_READ(flagi1, B_menu1))
+		{
+			encoderplus = 1;
+		timer3 = 0;
+		multiplexor ++;
+		}
+		if (!B_READ(flagi1, B_menu1))
+		{
+			shag ++;
+		}
+	}
+	else
+	{
+		if (B_READ(flagi1, B_menu1))
+		{
+			encoderminus = 1;
+		timer3 = 0;
+		multiplexor ++;
+		}
+		if (!B_READ(flagi1, B_menu1))
+		{
+			shag --;
+		}
+		
+	}
+	
+}
+ISR (TIMER2_OVF_vect)        // прерывания по переполнению таймера 0
+{
+	timer1++;                 // итерируем 4 переменные
+	timer2++;
+	timer3++;
+	timer4++;
+	switch (timer1)           // отображение символов, каждый раз значения кейса меняется и следовательно показываем следующий символ
+	{
+		case 1:
+		PORTD |= (1<<PORTD0);  // отпустили транзистор предыдцщего кейса
+		data1 (pgm_read_byte_near(&(tablo [razr2]))); // передали в spi символ из массива под номером который выдала функция разбивки числа на символы
+		PORTD &= ~(1<<PORTD1);
+		break;
+		
+		case 2:
+		PORTD |= (1<<PORTD1);
+		data1 (pgm_read_byte_near(&(tablo [razr3])));
+		PORTD &= ~(1<<PORTD2);
+		break;
+		
+		case 3:
+		PORTD |= (1<<PORTD2);
+		if (B_READ(flagi1, B_menu1)) 
+		data1 (pgm_read_byte_near(&(tablo [razr1])));
+		if (!B_READ(flagi1, B_menu1))
+		data1 (pgm_read_byte_near(&(tablo [10])));
+		PORTD &= ~(1<<PORTD0);
+		break;
+	}
+	if (timer1 == 3)        // когда достигли 3х обнуляемся чтоб показывать снова первый символ
+	{
+		timer1 = 0;
+	}
+	readenkoder();
+	if(KNOPKAON)
+	{
+		drebezg++;
+	}
+	else
+	{
+		drebezg = 0;
+		B_FALSE(flagi1, B_drebezgflag);
+		B_FALSE(flagi1, B_menu2);
+	}
+	
+	//TCNT0 = 150; //8 битный регистр таймера
+}
+//------------------------------------------------------------------------------
+// главный цикл
+//------------------------------------------------------------------------------
+
+int main(void)
+{
+	inicializacia ();
+	#ifndef DEBUG_MOD
+	proverka ();              // проверка символов
+	#endif
+	sei();                    // разрешить прерывания
+	B_TRUE(flagi1, B_drebezg);
+	B_TRUE(flagi1, B_menu1);
+    shag = EEPROM_read(1);
+	for (;;)
+	{
+		if (chislo1<=0) chislo1 = 0;
+		if (chislo1>=100) chislo1 = 100;
+		if (shag<=0) shag = 0;
+		if (shag>=5) shag = 5;
+		if (B_READ(flagi1, B_menu1)) vse_chislo (chislo1);
+		if (!B_READ(flagi1, B_menu1)) vse_chislo (pgm_read_byte_near(&(chastota [shag])));
+		if ((B_READ(flagi1, B_menu1)) && (B_READ(flagi1, B_zapiseeprom)))
+		{
+			EEPROM_write(1, shag);
+			B_FALSE(flagi1, B_zapiseeprom);
+		}
+		readknopka ();
+
+		ICR1 =  pgm_read_word_near(&(delitel [shag]));
+		OCR1A = chislo1 * pgm_read_byte_near(&(razdelitel [shag]));
+		
+		_delay_us(20);
+		
+	}
+}
+
+void inicializacia ()
+{
+	//--инициализируем прерывания -- //
+	EICRA = 0x08;            // прерывания по спаду
+	EIMSK = 0x02;	         // разрешить прерывания INT1
+	//--инициализируем таймер -- //
+	TIMSK2=0x01;            // включаем прерывания по переполнению
+	TCCR2B=0x03;            // делитель тактовой частоты на 64
+	/*//--инициализируем таймер -- //
+	TCCR0A = 0x23;            // включаем прерывания по переполнению
+	TCCR0B = 0x03;            // делитель тактовой частоты на 64*/
+	TCCR1A = 0x82;
+	TCCR1B = 0x19;
+	//--инициализируем spi и порты-- //
+	DDRB = 0xFE;            // Ножки SPI на выход
+	DDRC = 0x00;
+	DDRD = 0x1F;
+	PORTB = 0xE3;       //низкий уровень
+	PORTD = 0x28;
+	//--инициализируем АЦП -- //
+	/*ADMUX = 0x40;
+	ADCSRA = 0xEF;    // режим постоянного преобразования*/
+	}
+	void data1 (int razryad)            // передача знака
+	{
+	SPCR = ((1<<SPE)|(1<<MSTR));    //Включим шину, объявим ведущим
+	SPDR = razryad;
+	while (!(SPSR&(1<<SPIF)));      // ждем пока передадутся данные
+	PORTB |= (1<<PORTB2);
+	PORTB &= ~(1<<PORTB2);
+	
+	}
+	void vse_chislo (unsigned int rabivka_chisla)  // разбиваем число на 3 разряда
+	{
+	razr1 = rabivka_chisla/100;           // сотни
+	razr2 = rabivka_chisla%100/10;        // десятки
+	razr3 = rabivka_chisla%10;            // единицы
+
+	}
+	void readknopka ()
+	{
+		if (drebezg >=10000) drebezg = 10000;
+		if (drebezg >= 10 && !B_READ(flagi1, B_drebezgflag))
+		{
+			B_INVERT(flagi1, B_drebezg);
+			B_TRUE(flagi1, B_drebezgflag);
+		}
+		if (B_READ(flagi1, B_drebezg))
+		{
+			RABOTAOFF;
+			STOPPWM;
+			STOPPWMNOGA;
+		}
+		if (!B_READ(flagi1, B_drebezg)&& B_READ(flagi1, B_menu1))
+		{
+			RABOTAON;
+			GOOPWM;
+			GOOPWMNOGA;
+		}
+		if (drebezg >= 1000 && !B_READ(flagi1, B_menu2))
+		{
+			B_INVERT(flagi1, B_menu1);
+			B_TRUE(flagi1, B_menu2);
+			RABOTAOFF;
+			STOPPWM;
+			STOPPWMNOGA;
+			B_TRUE(flagi1, B_zapiseeprom);
+		}
+
+	}
+
+	void readenkoder()
+	{
+	if (timer3>=50)
+	{
+	timer3 = 50;
+	B_FALSE(flagi1, B_speed);
+	multiplexor = 0;
+	}
+	
+	if (multiplexor>=2 && timer3<50)
+	{
+	B_TRUE(flagi1, B_speed);
+	multiplexor = 0;
+	}
+	
+	if (encoderplus&& !B_READ(flagi1, B_speed))
+	{
+	chislo1 = chislo1 + ODIN;
+	encoderplus = 0;
+	
+	}
+	if (encoderminus&& !B_READ(flagi1, B_speed))
+	{
+	encoderminus = 0;
+	chislo1 = chislo1 - ODIN;
+	}
+	
+	if (encoderplus&& B_READ(flagi1, B_speed))
+	{
+	encoderplus = 0;
+	chislo1 = chislo1 + PYAT;
+	
+	}
+	
+	if (encoderminus&& B_READ(flagi1, B_speed))
+	{
+	encoderminus = 0;
+	chislo1 = chislo1 - PYAT;
+	}
+	}
+	/*void otobrazitver ()
+	{
+		perviysimvol = 0;
+		razr1 = 10;
+		razr2 = 1;
+
+		_delay_ms(1000);
+		}*/
+		void proverka ()
+		{
+		data1 (0x7F);
+		_delay_ms(500);
+		data1(0x7D);
+		_delay_ms(500);
+		data1(0x7C);
+		_delay_ms(500);
+		data1(0x78);
+		_delay_ms(500);
+		data1(0x68);
+		_delay_ms(500);
+		data1(0x28);
+		_delay_ms(500);
+		data1(0x20);
+		_delay_ms(300);
+		
+
+		}
