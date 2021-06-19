@@ -1,0 +1,362 @@
+#include <avr/io.h>
+#define F_CPU 8000000UL
+#include <util/delay.h>
+#include <avr/interrupt.h>
+
+//#define DEBUG_MOD       // отключает проверку символов
+
+//------------------------------------------------------------------------------
+// дефайним порты
+//------------------------------------------------------------------------------
+#define BUZERON         PORTC |= 0x01
+#define BUZEROFF        PORTC &= ~0x01
+#define BUZERINVERT     PORTC ^= 0x01
+#define KNOPKAENC     ~ PIND &  0x04
+#define ENCPOVOROT    ~ PIND &  0x10
+#define LEDON           PORTC |= 0x20
+#define LEDOFF          PORTC &= ~0x20
+#define VANNAON         PORTC |= 0x02
+#define VANNAOFF        PORTC &= ~0x02
+#define TRANZISTOR1VKL  PORTD |= 0x80
+#define TRANZISTOR1VIKL PORTD &= ~ 0x80
+#define TRANZISTOR2VKL  PORTB |= 0x01
+#define TRANZISTOR2VIKL PORTB &= ~ 0x01
+#define TRANZISTOR3VKL  PORTB |= 0x02
+#define TRANZISTOR3VIKL PORTB &= ~ 0x02
+#define CHIPSELECTON    PORTB |= 0x04
+#define CHIPSELECTOFF   PORTB &= ~ 0x04
+#define VREMYA 500                                     // время работы бузера
+
+
+//------------------------------------------------------------------------------
+// объявляем переменные
+//------------------------------------------------------------------------------
+volatile uint8_t razr1,razr2,razr3,simvol_num,pik_pik,knopkainkrement,odin_noll;
+volatile uint16_t timer1,timer2,timer3,shag,minute,sekond,prescaler;
+volatile bool prerivanie, tochka1,tochka2,cursor,procces,end,block,nazhatie_knop,yderzhanie_knop,endprog,buzergo,rezhim_nastroiki,rezhim_raboti,rezhim_preriv,vkl_vikl;
+
+const uint8_t segmenti [20] =  {      // преобразование цифры в 7 сегментный знак
+	// 0
+	0x28,
+	// 1
+	0xEB,
+	// 2
+	0x32,
+	// 3
+	0xA2,
+	// 4
+	0xE1,
+	// 5
+	0xA4,
+	// 6
+	0x24,
+	// 7
+	0xEA,
+	// 8
+	0x20,
+	// 9
+	0xA0,
+	// H
+	0x61
+};
+
+//------------------------------------------------------------------------------
+// объявляем прототипы функций
+//------------------------------------------------------------------------------
+void init (void);
+void peredacha_spi (int razryad);
+void razbivaem_chislo (unsigned int vhod_chislo);
+void razbivaem_chislo_more10 (unsigned int vhod_chislo1,unsigned int vhod_chislo2);
+void razbivaem_chislo_less10 (unsigned int vhod_chislo1,unsigned int vhod_chislo2);
+void buzerend (void);
+void buzerstart (void);
+
+
+
+ISR ( INT1_vect )        // прерывания от ацп
+{
+	if (ENCPOVOROT)
+	{
+		if (minute < 30 && rezhim_raboti){
+			minute ++;
+			endprog = false;
+			block = false;
+			
+		}
+		 if (rezhim_nastroiki) odin_noll = 1 ;
+		 buzergo = true;
+	}
+	else
+	{
+		if (minute >= 2 && rezhim_raboti){
+			minute --;
+		}
+		if (rezhim_nastroiki) odin_noll = 0 ;
+		 buzergo = true;
+	}
+	
+}
+
+ISR (TIMER0_OVF_vect){
+	
+	simvol_num ++;
+	
+	switch (simvol_num)           // отображение символов, каждый раз значения кейса меняется и следовательно показываем следующий символ
+	{
+		case 1:
+		TRANZISTOR3VKL;  // отпустили транзистор предыдцщего кейса
+		if (rezhim_raboti ){
+			if (tochka1 || cursor)peredacha_spi (segmenti [razr1] ); // передали в spi символ из массива под номером который выдала функция разбивки числа на символы  ^ 0x20
+			else peredacha_spi (segmenti [razr1] ^ 0x20  ); // передали в spi символ из массива под номером который выдала функция разбивки числа на символы  ^ 0x20
+		}
+		if (rezhim_nastroiki ){
+			peredacha_spi (segmenti [10]);
+		}
+		TRANZISTOR1VIKL;
+		break;
+		
+		case 2:
+		TRANZISTOR1VKL;
+		if (tochka2 || cursor) peredacha_spi (segmenti [razr2]);
+		else peredacha_spi (segmenti [razr2] ^ 0x20);
+		TRANZISTOR2VIKL;
+		break;
+		
+		case 3:
+		TRANZISTOR2VKL;
+		peredacha_spi (segmenti [razr3]);
+		TRANZISTOR3VIKL;
+		break;
+	}
+	if (simvol_num == 3)        // когда достигли 3х обнуляемся чтоб показывать снова первый символ
+	{
+		simvol_num = 0;
+	}
+	
+	if (KNOPKAENC){
+		knopkainkrement ++;
+		if (knopkainkrement >= 210) knopkainkrement = 210;
+		if (knopkainkrement == 200) buzergo = true;
+	}
+	else
+	{
+		if (knopkainkrement >= 20 && knopkainkrement < 200) {
+			if(rezhim_raboti) nazhatie_knop = true;
+			buzergo = true;
+		}
+		
+		if (knopkainkrement > 200){
+			yderzhanie_knop = true;
+		}
+		knopkainkrement = 0;
+		
+	}
+	
+}
+
+ISR (TIMER1_COMPA_vect){
+	
+	if (procces){
+		if (odin_noll == 1){
+			
+			if (!vkl_vikl){
+			LEDON;
+		}
+		if (vkl_vikl){
+			LEDOFF;
+		}
+		}
+		else LEDON;
+		
+		if (sekond == 0)
+		{
+			if (minute > 0)
+			{
+				minute --;
+				sekond = 60;
+			}
+		}
+		if (sekond > 0)
+		{
+			sekond --;
+			cursor = !cursor;
+		}
+		else {
+			endprog = true;
+			procces = false;
+		}
+	}
+	else {
+		LEDOFF;
+	}
+	
+	
+	timer3 ++;
+	if (timer3 >= 1000) timer3 = 1000;
+	if (odin_noll == 1){
+		if (timer3 >= 2){
+			vkl_vikl = !vkl_vikl;
+	        timer3 = 0;
+		}
+	}
+	
+}
+
+ISR (TIMER2_OVF_vect){
+	
+	
+	if (timer1 <= 1) timer1 = 1;
+	timer1 --;
+	if (timer2 <= 1) timer2 = 1;
+	timer2 --;
+}
+
+
+int main(void)
+{
+	init();
+	minute = 5;
+	cursor = false;
+	rezhim_nastroiki = false;
+	rezhim_raboti = true;
+	
+	for (;;)
+	{
+		if (yderzhanie_knop){
+			rezhim_nastroiki = !rezhim_nastroiki;
+			rezhim_raboti = !rezhim_raboti;
+			yderzhanie_knop = false;
+		}
+		
+		if (rezhim_raboti){
+			
+			if ( nazhatie_knop && !procces){
+				procces = true;
+				nazhatie_knop = false;
+			}
+			if ( nazhatie_knop && procces){
+				procces = false;
+				nazhatie_knop = false;
+				if (sekond !=0 ) cursor = false;
+			}
+			
+			
+			if (minute >= 10){
+				razbivaem_chislo_more10 (minute,sekond);
+				tochka1 = true;
+				tochka2 = false;
+				if (!procces) cursor = false;
+			}
+			if (minute < 10) {
+				razbivaem_chislo_less10 (minute,sekond);
+				tochka1 = false;
+				tochka2 = true;
+				if (!procces && minute !=0 ) cursor = false;
+			}
+			
+			if ( !block && endprog) {
+				cursor = true;
+				block = true;
+				end = true;
+			}
+			buzerstart();
+			buzerend ();
+		}
+		
+		if (rezhim_nastroiki)
+		{
+			buzerstart();
+			razbivaem_chislo (odin_noll);
+			procces = false;
+		}
+		
+		
+		
+		
+	}
+}
+
+void init (void){
+	
+	//--инициализируем прерывания -- //
+	EICRA = 0x08;            // прерывания по спаду
+	EIMSK = 0x02;	         // разрешить прерывания INT1
+	//--инициализируем таймер T0-- //
+	TIMSK0=0x01;            // включаем прерывания по переполнению
+	TCCR0B=0x03;            // делитель тактовой частоты на 8
+	//--инициализируем таймер T1-- //
+	TIMSK1 = 0x02;            // включаем прерывания по sravn
+	TCCR1B = 0x0B;            // делитель тактовой частоты на 1024      0x0D;
+	OCR1A = 0x1E84;
+	//--инициализируем таймер T2-- //
+	TIMSK2 = 0x01;            // включаем прерывания по переполнению
+	TCCR2B = 0x03;            // делитель тактовой частоты на 64
+	
+
+	//--инициализируем spi и порты-- //
+	DDRD = 0x80;
+	DDRB = 0x3F;            // Ножки SPI на выход
+	DDRC = 0x23;
+	PORTD = 0x1C;
+	
+	
+	//PORTB = 0xE3;       //низкий уровень
+	
+	sei();
+	
+}
+void peredacha_spi (int razryad)            // передача знака
+{
+	SPCR = ((1<<SPE)|(1<<MSTR));    //Включим шину, объявим ведущим
+	SPDR = razryad;
+	while (!(SPSR&(1<<SPIF)));      // ждем пока передадутся данные
+	CHIPSELECTON;
+	CHIPSELECTOFF;
+}
+void razbivaem_chislo (unsigned int vhod_chislo)  // разбиваем число на 3 разряда
+{
+	razr2 = vhod_chislo%100/10;        // десятки
+	razr3 = vhod_chislo%10;            // единицы
+}
+void razbivaem_chislo_less10 (unsigned int vhod_chislo1,unsigned int vhod_chislo2)  // разбиваем число на 3 разряда
+{
+	razr1 = vhod_chislo1 ;               // сотни
+	razr2 = vhod_chislo2%100/10;        // десятки
+	razr3 = vhod_chislo2%10;            // единицы
+}
+void razbivaem_chislo_more10 (unsigned int vhod_chislo1,unsigned int vhod_chislo2)  // разбиваем число на 3 разряда
+{
+	
+	razr1 = vhod_chislo1%100/10;        // десятки
+	razr2 = vhod_chislo1%10;            // единицы
+	razr3 = vhod_chislo2%100/10;;
+}
+void buzerend (void){
+	if (end && pik_pik <= 6  && timer1 <= 2)           //
+	{
+		BUZERINVERT;
+		timer1 = VREMYA;
+		pik_pik ++;
+	}
+
+	if (pik_pik  == 6)
+	{
+		pik_pik = 0;
+		BUZEROFF;
+		end = false;
+	}
+}
+void buzerstart (void){
+	if (buzergo && timer2 <= 2)
+	{
+		timer2 = 50;
+		BUZERON;
+		buzergo = false;
+	}
+	if (!buzergo && timer2 <= 2 && !end)
+	{
+		
+		BUZEROFF;
+	}
+	
+}
