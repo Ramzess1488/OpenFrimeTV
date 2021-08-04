@@ -1,0 +1,88 @@
+uint16_t prov;
+extern uint16_t millis;
+extern uint8_t sekond, minut,dop_vremya, menu, vse_knopki ;
+extern bool pauza,morgnyt, nazhatie, yderzhanie, nazhatie_i_yskorenie;
+
+uint8_t pod_menu, bez_zvuka,kolichestvo_poluvoln;
+bool podmenu, zero_sekond,ocistka,init,nazhmi_enter ;
+
+
+int main(void)
+{
+	inicializacia ();      // первоначальная инициализация портов и переферии
+	nastroika_max7219();   // настраиваем индикаторы
+	kolichestvo_poluvoln = 2;
+	
+	for(;;)
+	{
+		
+		indicaciya();
+
+		send_big_digit (prov)	;
+
+
+
+		if (proverka_na_nazhatie(KNOPLEVO,NAZHALI)){
+			prov ++;
+		}
+		if (proverka_na_nazhatie(KNOPLEVO,YSKORENIESCHETA)){
+			prov ++;
+		}
+		if (proverka_na_nazhatie(KNOPENTER,YDERZHALI))
+		{
+			LEDON;
+			for(;;)
+			{
+				indicaciya();
+				send_symbol (0,'S');
+				send_symbol (1,'O');
+				send_symbol (2,'S');
+				send_symbol (3,'I');
+			}
+		}
+
+		if (prov == 10000) prov = 0;
+		
+		
+		
+	}
+}
+
+
+
+
+uint8_t proverka_na_nazhatie (uint8_t knopk, uint8_t nazhatie_uderzhanie) {               // функция проверки кнопок на нажатие, удержание и ускрорение счета сюда загружаем дефайны (какую кнопку нужно опросить) и (на что ее опросить)
+	if (knopk == vse_knopki && nazhatie_uderzhanie == 0x80){                              // если загруженная кнопка совпала с нажатой и выбрано нажатие
+		if (nazhatie){                                                                    // если произошло нажатие (там в прерываниях)
+			nazhatie = false;                                                             // сбрасываем нажатие
+			return 1;                                                                     // возвращаем единицу если было нажатие и мы его сбросили
+		}
+	}
+	if (knopk == vse_knopki && nazhatie_uderzhanie == 0x40){                              // если загруженая кнопка совпадает с нажатой и выбрано удержание
+		if (yderzhanie){                                                                
+			yderzhanie = false;                                                           // сбрасываем удержание
+			return 1;                                                                     // возвращаем единицу
+		}
+	}
+	if (knopk == vse_knopki && nazhatie_uderzhanie == 0x20){                              // если загруженная кнопка совпала с нажатой и выбрано нажатие и удержание 
+		if (nazhatie_i_yskorenie){
+			nazhatie_i_yskorenie = false;                                                 // сбрасываем нажатие и ускорение
+			return 1;                                                                     // возвращаем единицу
+		} 
+	}
+	return 0;                                                                             // если ничего не совпало возвращаем ноль 
+}
+
+////////////////////////////////////////////////////////////////////////
+
+#define KNOPLEVO         0x1E
+#define KNOPPRAVO        0x1B
+#define KNOPVVERH        0x1D
+#define KNOPVNIZ         0x17
+#define KNOPENTER        0x0F
+
+#define NAZHALI          0x80
+#define YDERZHALI        0x40
+#define YSKORENIESCHETA  0x20
+
+
